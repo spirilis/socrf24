@@ -3,12 +3,50 @@
 #include <socrf24.h>
 #include <getopt.h>
 #include <libsoc_debug.h>
+#include <fcntl.h>
+#include <errno.h>
 
 // SPI#1, P9_24 aka GPIO0_15, P9_23 aka GPIO1_17, P8_26 aka GPIO1_29
-SoCrf24<0, 15, 49, 61> radio;
+SoCrf24<1, 15, 49, 61> radio;
 uint8_t basestation_addr[5] = {0xDE, 0xAD, 0xBE, 0xEF, 0x01};
 unsigned int channel = 0, addrlen = 5;
 enum rf24_speed rfspeed = SPEED_1MBPS;
+
+const char * nrf_state(enum rf24_state s)
+{
+	switch (s) {
+		case NOT_PRESENT:
+			return "TRANSCEIVER NOT PRESENT";
+			break;
+		case POWERDOWN:
+			return "LOW-POWER SLEEP";
+			break;
+		case STANDBY:
+			return "STANDBY";
+			break;
+		case PTX:
+			return "PTX";
+			break;
+		case PRX:
+			return "PRX";
+			break;
+	}
+}
+
+const char * nrf_speed(enum rf24_speed s)
+{
+	switch (s) {
+		case SPEED_250KBPS:
+			return "250Kbps";
+			break;
+		case SPEED_1MBPS:
+			return "1Mbps";
+			break;
+		case SPEED_2MBPS:
+			return "2Mbps";
+			break;
+	}
+}
 
 char * nrfaddr_explode(const uint8_t *addr, size_t len = 5)
 {
@@ -72,6 +110,18 @@ const uint8_t * nrfaddr_interpret(const char *a, size_t alen = 5)
 	return addr;
 }
 
+void dumpregs()
+{
+	uint8_t addrs[19], buf[19];
+	int i;
+
+	radio.dumpregs(addrs, buf);
+	printf("nRF24L01+ Register Dump:\n");
+	for (i = 0; i < 19; i++) {
+		printf("  R#%02x = %02X\n", addrs[i], buf[i]);
+	}
+}
+
 int main(int argc, char *argv[])
 {
 	//libsoc_set_debug(1);
@@ -129,7 +179,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	printf("nrfdump: listening on %s at channel %u\n", nrfaddr_explode(basestation_addr, addrlen), channel);
+	printf("nrfdump: listening on %s at channel %u, speed = %s\n", nrfaddr_explode(basestation_addr, addrlen), channel, nrf_speed(rfspeed));
 
 	if (!radio.begin(rfspeed, channel)) {
 		printf("radio.begin() failed; exiting\n");
@@ -137,15 +187,21 @@ int main(int argc, char *argv[])
 	}
 
 	radio.setAddressLength(addrlen);
+	radio.setCRC(CRC16);
 	radio.setRXaddress(0, basestation_addr);
-	radio.open(0, 0, false);
+	radio.open(0, 0, true);
 	radio.enableRX();
+
+	printf("Transceiver state: %s\n", nrf_state(radio.radioState()));
 
 	uint8_t buf[32], pipeid, len;
 	int i;
 
+	fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);  // Make read() on STDIN non-blocking so our loop doesn't hang
+	dumpregs();
 	while (1) {
-		if (radio.available(true)) {
+		if (radio.available(false)) {
+			printf("RX event-\n");
 			len = radio.recv(buf, 32, &pipeid);
 			if (len) {
 				printf("Pipe = %d, length = %d\n", pipeid, len);
@@ -159,6 +215,14 @@ int main(int argc, char *argv[])
 				printf("\n");
 			}
 		}
+		i = read(STDIN_FILENO, buf, 32);
+		if (i != -1) {
+			if (buf[0] == '\n' || (buf[0] == '\r' && buf[1] == '\n')) {
+				dumpregs();
+			}
+		}
+		//printf("IRQ = %d\n", radio.getIRQState());
 	}
 
 }
+

@@ -166,6 +166,7 @@ class SoCrf24 {
 			libsoc_spi_rw(SPI, &reg, &rf_status, 1);
 			libsoc_spi_write(SPI, &val, 1);
 			csn_dis();
+			fprintf(stderr, "WR: %02X %02X\n", reg & ~RF24_W_REGISTER, val);
 		};
 
 		__noinline
@@ -191,7 +192,7 @@ class SoCrf24 {
 			csn_en();
 			reg |= RF24_W_REGISTER;
 			libsoc_spi_rw(SPI, &reg, &rf_status, 1);
-			for (int i = len; i >= 0; i--) {
+			for (int i = len-1; i >= 0; i--) {
 				libsoc_spi_write(SPI, (uint8_t *)data+i, 1);
 			}
 			csn_dis();
@@ -202,7 +203,7 @@ class SoCrf24 {
 			csn_en();
 			reg |= RF24_R_REGISTER;
 			libsoc_spi_rw(SPI, &reg, &rf_status, 1);
-			for (int i = len; i >= 0; i--) {
+			for (int i = len-1; i >= 0; i--) {
 				libsoc_spi_read(SPI, (uint8_t *)data+i, 1);
 			}
 			csn_dis();
@@ -260,14 +261,17 @@ class SoCrf24 {
 
 			setAddressLength(rf_address_width);
 			irq_is_flagged = false;
-			for (i=0; i < 6; i++) {
-				close(i);
-			}
+			w_reg(RF24_EN_AA, 0x00);
+			w_reg(RF24_EN_RXADDR, 0x00);
+			w_reg(RF24_DYNPD, 0x00);
 			w_reg(RF24_CONFIG, 0x00);
+
 			setChannel(chan);
 			setSpeed(datarate);
 			setTXpower(-18);  // Defaults at minimum
 			w_reg(RF24_FEATURE, 0x04);  // EN_DPL=1, EN_ACK_PAY=0, EN_DYN_ACK=0
+			w_msbstring(RF24_FLUSH_TX, NULL, 0);
+			w_msbstring(RF24_FLUSH_RX, NULL, 0);
 
 			return true;
 		};
@@ -346,7 +350,8 @@ class SoCrf24 {
 				enaa = r_reg(RF24_EN_AA);
 				dynpd = r_reg(RF24_DYNPD);
 
-				if (autoack)
+				// Dynamic Payload requires ENAA
+				if (pktsize == 0 || autoack)
 					enaa |= (1 << pipeid);
 				else
 					enaa &= ~(1 << pipeid);
@@ -358,7 +363,7 @@ class SoCrf24 {
 					w_reg(RF24_RX_PW_P0 + pipeid, pktsize);
 					dynpd &= ~(1 << pipeid);
 				} else {
-					w_reg(RF24_RX_PW_P0 + pipeid, 32);
+					w_reg(RF24_RX_PW_P0 + pipeid, 0);  // Not actually used
 					dynpd |= (1 << pipeid);
 				}
 				w_reg(RF24_DYNPD, dynpd);
@@ -532,6 +537,35 @@ class SoCrf24 {
 			return PRX;
 		};
 
+		// Register dump requires 19 bytes
+		// Two buffers are provided: addrs = nRF24 Register Address, buf = contents
+		// Only 1-byte registers are provided (TX/RX addresses not included)
+		__noinline
+		size_t dumpregs(void *addrs, void *buf) {
+			uint8_t addr, *cbuf = (uint8_t *)buf, *caddrs = (uint8_t *)addrs;
+			size_t idx = 0;
+
+			for (addr = 0x00; addr <= 0x09; addr++) {
+				caddrs[idx] = addr;
+				cbuf[idx++] = r_reg(addr);
+			}
+			for (addr = 0x11; addr <= 0x17; addr++) {
+				caddrs[idx] = addr;
+				cbuf[idx++] = r_reg(addr);
+			}
+			for (addr = 0x1C; addr <= 0x1D; addr++) {
+				caddrs[idx] = addr;
+				cbuf[idx++] = r_reg(addr);
+			}
+			return idx;
+		};
+
+		__inline
+		int getIRQState(void) {
+			int i = libsoc_gpio_get_level(irq);
+			return i;
+		};
+
 		/* User I/O */
 		__noinline
 		bool available(bool short_method=false) {
@@ -543,8 +577,22 @@ class SoCrf24 {
 					return false;
 			}
 			uint8_t fifo = r_reg(RF24_FIFO_STATUS);
-			if (fifo & RF24_RX_EMPTY)
+			if (fifo & RF24_RX_EMPTY) {
+				// Verify there are no pending IRQs
+				if (rf_status & RF24_RX_DR) {
+					// Clear IRQ since the RX FIFO is empty
+					w_reg(RF24_STATUS, RF24_RX_DR);
+				}
 				return false;
+			}
+			// Check RF24_R_RX_PL_WID and make sure it's not an invalid packet
+			uint8_t plwidth;
+			r_msbstring(RF24_R_RX_PL_WID, &plwidth, 1);
+			if (plwidth == 0 || plwidth > 32) {
+				w_msbstring(RF24_FLUSH_RX, NULL, 0);  // Issue FLUSH_RX
+				w_reg(RF24_STATUS, RF24_RX_DR);  // and clear any pending RX IRQs since we just purged all RX FIFOs
+				return false;
+			}
 			return true;
 		};
 
