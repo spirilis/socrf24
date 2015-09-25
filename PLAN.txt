@@ -1,0 +1,31 @@
+C++ library for managing nRF24L01+ modules
+
+1. begin() and end() similar to Enrf24
+
+2. available() tells if any RX FIFOs are filled
+
+3. write() adds to an internal 32-byte buffer which may be auto-transmitted when full; a write(const uint8_t *, size_t) option is available
+
+4. flush() and purge() complement the write() calls
+
+5. recv() fills a supplied buffer and optional supplied uint8_t with the pipe#
+
+6. sendto() allows specifying a TX address and full buffer in one call
+
+7. setAddressLength(), setRXaddress(pipe, uint8_t *) and setTXaddress(uint8_t *)
+
+8. autoAck(bool), setCRC(enum rf24_crc), setSpeed(enum rf24_speed), setTXpower(enum rf24_txpower)
+
+9. setAutoAckParams(uint8_t autoretry_count, uint8_t autoretry_timeout)
+
+10. bool getAutoAck(), enum rf24_crc getCRC(), enum rf24_speed getSpeed(), enum rf24_txpower getTXpower()
+
+11. setChannel(uint8_t), uint8_t getChannel()
+
+12. getTXaddress(uint8_t *, optional size_t *), getRXaddress(uint8_t pipeid, uint8_t *, optional size_t *)
+
+13. bool rfSignalDetected()
+
+14. enum rf24_state radioState()
+
+15. enableRX(), disableRX()
