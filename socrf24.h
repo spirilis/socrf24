@@ -204,8 +204,16 @@ class Socrf24 {
 		void setAddressLength(uint8_t width) {
 			if (width >= 3 && width <= 5) {
 				rf_address_width = width;
-				w_reg(RF24_SETUP_AW, width);
+				w_reg(RF24_SETUP_AW, width-2);
 			};
+		};
+
+		__inline
+		bool isPresent(void) {  // Use SETUP_AW to determine if SPI, GPIO's are working right
+			uint8_t saw = r_reg(RF24_SETUP_AW);
+			if ( (saw & 0xFC) == 0x00 && (saw & 0x03) != 0x00 )
+				return true;
+			return false;
 		};
 
 		/* Pipe management */
@@ -337,6 +345,23 @@ class Socrf24 {
 			if (t < -12)
 				pwr = 0x00;  // -18dBm
 			w_reg(RF24_RF_SETUP, rfsp | pwr);
+		};
+
+		/* Channel */
+		__inline
+		uint8_t getChannel(void) {
+			return r_reg(RF24_RF_CH);
+		};
+
+		__inline
+		void setChannel(uint8_t ch) {
+			if (ch <= 125)
+				w_reg(RF24_RF_CH, ch);
+		};
+
+		__inline
+		bool rfSignalDetected(void) {  // Is there RF activity on the current channel
+			return (bool) r_reg(RF24_RPD);
 		};
 };
 
