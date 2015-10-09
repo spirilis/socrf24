@@ -166,7 +166,6 @@ class SoCrf24 {
 			libsoc_spi_rw(SPI, &reg, &rf_status, 1);
 			libsoc_spi_write(SPI, &val, 1);
 			csn_dis();
-			fprintf(stderr, "WR: %02X %02X\n", reg & ~RF24_W_REGISTER, val);
 		};
 
 		__noinline
